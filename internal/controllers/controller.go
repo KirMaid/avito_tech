@@ -24,6 +24,28 @@ type UpdateTenderRequest struct {
 	Description string `json:"description"`
 }
 
+func checkOrganizationResponsibility(c *fiber.Ctx, organizationID uuid.UUID) error {
+	db := c.Locals("db").(*gorm.DB)
+	userID := c.Locals("userID").(uuid.UUID) // Предположим, что userID хранится в локалах
+
+	// Проверяем, является ли пользователь ответственным за организацию
+	var orgResp models.OrganizationResponsible
+	if err := db.Where("user_id = ? AND organization_id = ?", userID, organizationID).First(&orgResp).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(403).JSON(fiber.Map{
+				"status": "FORBIDDEN",
+				"reason": "Пользователь не имеет доступа",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"status": "ERROR",
+			"error":  "Ошибка при проверке ответственности за организацию",
+		})
+	}
+
+	return nil
+}
+
 func GetTenders(c *fiber.Ctx) error {
 	db := c.Locals("db").(*gorm.DB)
 
@@ -129,7 +151,20 @@ func GetMyTenders(c *fiber.Ctx) error {
 		})
 	}
 
-	var tenders []models.Tender
+	// Check if the user exists
+	var user models.Employee
+	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(400).JSON(fiber.Map{
+				"reason": "Пользователя не существует",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при проверке пользователя",
+		})
+	}
+
+	var tenders []models.TenderResponse
 	if err := db.Where("creator_username = ?", username).Find(&tenders).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"error": "Ошибка при получении тендеров",
@@ -137,7 +172,7 @@ func GetMyTenders(c *fiber.Ctx) error {
 	}
 
 	if len(tenders) == 0 {
-		return c.Status(200).JSON([]models.Tender{})
+		return c.Status(200).JSON([]models.TenderResponse{})
 	}
 
 	return c.Status(200).JSON(tenders)
@@ -190,6 +225,68 @@ func UpdateTender(c *fiber.Ctx) error {
 	return c.Status(200).JSON(tender)
 }
 
+func GetTenderStatus(c *fiber.Ctx) error {
+	db := c.Locals("db").(*gorm.DB)
+
+	// Получение параметров из запроса
+	tenderID := c.Params("tenderId")
+	username := c.Query("username")
+
+	// Проверка наличия username в запросе
+	if username == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "Параметр username обязателен",
+		})
+	}
+
+	// Проверка существования пользователя
+	var user models.Employee
+	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(400).JSON(fiber.Map{
+				"reason": "Пользователь не найден",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при проверке пользователя",
+		})
+	}
+
+	// Проверка существования тендера
+	var tender models.Tender
+	if err := db.First(&tender, "id = ?", tenderID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(fiber.Map{
+				"reason": "Тендер не найден",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при получении тендера",
+		})
+	}
+
+	// Проверка прав доступа пользователя к тендеру
+	/*if tender.Status == "CREATED" || tender.Status == "CLOSED" {
+		// Если тендер в статусе CREATED или CLOSED, проверяем, является ли пользователь ответственным за организацию
+		if user.OrganizationID != tender.OrganizationID {
+			return c.Status(403).JSON(fiber.Map{
+				"error": "Нет прав доступа к этому тендеру",
+			})
+		}
+	} else if tender.Status == "PUBLISHED" {
+		// Если тендер в статусе PUBLISHED, доступен всем пользователям
+		// Никакой дополнительной проверки не требуется
+	} else {
+		// Для всех других статусов доступ запрещён
+		return c.Status(403).JSON(fiber.Map{
+			"error": "Нет прав доступа к этому тендеру",
+		})
+	}*/
+
+	// Возвращаем статус тендера
+	return c.SendString(tender.Status)
+}
+
 func RollbackTender(c *fiber.Ctx) error {
 	db := c.Locals("db").(*gorm.DB)
 
@@ -240,7 +337,7 @@ func RollbackTender(c *fiber.Ctx) error {
 func saveTenderVersion(db *gorm.DB, tender models.Tender) error {
 	latestVersion := models.TenderVersion{
 		TenderID:    tender.ID,
-		Version:     getNewVersion(db, tender.ID), // Функция для получения новой версии
+		Version:     getNewVersion(db, tender.ID),
 		Name:        tender.Name,
 		Description: tender.Description,
 		ServiceType: tender.ServiceType,
