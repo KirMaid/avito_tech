@@ -14,7 +14,6 @@ type CreateTenderRequest struct {
 	Name            string    `json:"name" validate:"required"`
 	Description     string    `json:"description"`
 	ServiceType     string    `json:"serviceType" validate:"required"`
-	Status          string    `json:"status" validate:"required"`
 	OrganizationID  uuid.UUID `json:"organizationId" validate:"required"`
 	CreatorUsername string    `json:"creatorUsername" validate:"required"`
 }
@@ -64,7 +63,7 @@ func CreateTender(c *fiber.Ctx) error {
 		Name:            request.Name,
 		Description:     request.Description,
 		ServiceType:     request.ServiceType,
-		Status:          request.Status,
+		Status:          "CREATED",
 		OrganizationID:  request.OrganizationID,
 		CreatorUsername: request.CreatorUsername,
 	}
