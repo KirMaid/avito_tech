@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -58,6 +59,37 @@ func CreateTender(c *fiber.Ctx) error {
 		})
 	}
 
+	// Check if the user exists
+	var user models.Employee
+	if err := db.Where("username = ?", request.CreatorUsername).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(400).JSON(fiber.Map{
+				"reason": "Пользователя не существует",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при проверке пользователя",
+		})
+	}
+
+	var orgResp models.OrganizationResponsible
+	if err := db.Where("user_id = ?", user.ID).First(&orgResp).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return c.Status(400).JSON(fiber.Map{
+				"reason": "Организация пользователя не найдена",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при проверке организации пользователя",
+		})
+	}
+
+	if orgResp.OrganizationID != request.OrganizationID {
+		return c.Status(400).JSON(fiber.Map{
+			"reason": "Организация пользователя не совпадает с указанной в запросе",
+		})
+	}
+
 	tender := models.Tender{
 		ID:              uuid.New(),
 		Name:            request.Name,
@@ -74,7 +106,17 @@ func CreateTender(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.Status(200).JSON(tender)
+	response := models.TenderResponse{
+		ID:             tender.ID,
+		Name:           tender.Name,
+		Description:    tender.Description,
+		ServiceType:    tender.ServiceType,
+		Status:         tender.Status,
+		CreatedAt:      tender.CreatedAt,
+		OrganizationID: tender.OrganizationID,
+	}
+
+	return c.Status(200).JSON(response)
 }
 
 func GetMyTenders(c *fiber.Ctx) error {
