@@ -2,12 +2,10 @@ package internal
 
 import (
 	"github.com/gofiber/fiber/v2"
-	"log"
 	"zadanie-6105/internal/controllers"
 )
 
 func SetupRoutes(app *fiber.App) {
-	log.Println("connected")
 	app.Get("/api/ping", func(c *fiber.Ctx) error {
 		return c.SendString("ok")
 	})

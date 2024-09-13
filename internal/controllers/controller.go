@@ -152,7 +152,6 @@ func UpdateTender(c *fiber.Ctx) error {
 func RollbackTender(c *fiber.Ctx) error {
 	db := c.Locals("db").(*gorm.DB)
 
-	// Получаем ID тендера и версию из параметров пути
 	tenderID := c.Params("tenderId")
 	version := c.Params("version")
 
@@ -164,7 +163,6 @@ func RollbackTender(c *fiber.Ctx) error {
 		})
 	}
 
-	// Поиск указанной версии тендера
 	var tenderVersion models.TenderVersion
 	if err := db.Where("tender_id = ? AND version = ?", tenderUUID, version).First(&tenderVersion).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -177,7 +175,6 @@ func RollbackTender(c *fiber.Ctx) error {
 		})
 	}
 
-	// Применяем параметры указанной версии к текущему тендеру
 	var tender models.Tender
 	if err := db.First(&tender, "id = ?", tenderUUID).Error; err != nil {
 		return c.Status(404).JSON(fiber.Map{
@@ -190,14 +187,12 @@ func RollbackTender(c *fiber.Ctx) error {
 	tender.ServiceType = tenderVersion.ServiceType
 	tender.Status = tenderVersion.Status
 
-	// Сохранение отката тендера
 	if err := db.Save(&tender).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"error": "Ошибка при сохранении изменений",
 		})
 	}
 
-	// Возвращаем обновлённые данные тендера
 	return c.Status(200).JSON(tender)
 }
 
@@ -223,7 +218,6 @@ func getNewVersion(db *gorm.DB, tenderID uuid.UUID) int {
 func CreateBid(c *fiber.Ctx) error {
 	db := c.Locals("db").(*gorm.DB)
 
-	// Структура для получения данных из тела запроса
 	type CreateBidInput struct {
 		Name            string `json:"name" validate:"required"`
 		Description     string `json:"description"`
@@ -266,7 +260,6 @@ func CreateBid(c *fiber.Ctx) error {
 		})
 	}
 
-	// Создание предложения
 	bid := models.Bid{
 		Name:            input.Name,
 		Description:     input.Description,
@@ -350,7 +343,6 @@ func RollbackBidVersion(c *fiber.Ctx) error {
 		})
 	}
 
-	// Обновление основного предложения до выбранной версии
 	var bid models.Bid
 	if err := db.First(&bid, "id = ?", uuid.MustParse(bidID)).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
@@ -401,7 +393,6 @@ func EditBid(c *fiber.Ctx) error {
 		})
 	}
 
-	// Сохранение текущей версии предложения перед обновлением
 	bidVersion := models.BidVersion{
 		ID:          uuid.New(),
 		BidID:       bid.ID,
@@ -418,7 +409,6 @@ func EditBid(c *fiber.Ctx) error {
 		})
 	}
 
-	// Обновление предложения
 	bid.Name = input.Name
 	bid.Description = input.Description
 	bid.Version += 1
