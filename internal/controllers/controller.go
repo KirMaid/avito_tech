@@ -26,22 +26,13 @@ type UpdateTenderRequest struct {
 	Description string `json:"description"`
 }
 
-func checkOrganizationResponsibility(c *fiber.Ctx, organizationID uuid.UUID) error {
-	db := c.Locals("db").(*gorm.DB)
-	userID := c.Locals("userID").(uuid.UUID)
-
+func checkOrganizationResponsibility(db *gorm.DB, userID uuid.UUID, organizationID uuid.UUID) error {
 	var orgResp models.OrganizationResponsible
 	if err := db.Where("user_id = ? AND organization_id = ?", userID, organizationID).First(&orgResp).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.Status(403).JSON(fiber.Map{
-				"status": "FORBIDDEN",
-				"reason": "Пользователь не имеет доступа",
-			})
+			return fiber.NewError(fiber.StatusForbidden, "Пользователь не имеет доступа")
 		}
-		return c.Status(500).JSON(fiber.Map{
-			"status": "ERROR",
-			"error":  "Ошибка при проверке ответственности за организацию",
-		})
+		return fiber.NewError(fiber.StatusInternalServerError, "Ошибка при проверке ответственности за организацию")
 	}
 
 	return nil
@@ -85,12 +76,12 @@ func CreateTender(c *fiber.Ctx) error {
 	var user models.Employee
 	if err := db.Where("username = ?", request.CreatorUsername).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.Status(400).JSON(fiber.Map{
+			return c.Status(401).JSON(fiber.Map{
 				"reason": "Пользователь не существует или некорректен.",
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"reason": "Пользователь не существует или некорректен.",
+			"reason": "Ошибка при проверке пользователя",
 		})
 	}
 
@@ -111,7 +102,7 @@ func CreateTender(c *fiber.Ctx) error {
 		Name:            request.Name,
 		Description:     request.Description,
 		ServiceType:     request.ServiceType,
-		Status:          "CREATED",
+		Status:          models.StatusCreated,
 		OrganizationID:  request.OrganizationID,
 		CreatorUsername: request.CreatorUsername,
 	}
@@ -150,21 +141,21 @@ func GetMyTenders(c *fiber.Ctx) error {
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Некорректное значение параметра limit",
+			"reason": "Некорректное значение параметра limit",
 		})
 	}
 
 	offset, err := strconv.Atoi(offsetStr)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Некорректное значение параметра offset",
+			"reason": "Некорректное значение параметра offset",
 		})
 	}
 
 	var user models.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.Status(400).JSON(fiber.Map{
+			return c.Status(401).JSON(fiber.Map{
 				"reason": "Пользователя не существует",
 			})
 		}
@@ -204,8 +195,8 @@ func UpdateTender(c *fiber.Ctx) error {
 	var user models.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.Status(400).JSON(fiber.Map{
-				"reason": "Пользователь не найден",
+			return c.Status(401).JSON(fiber.Map{
+				"reason": "Пользователь не существует или некорректен.",
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
@@ -225,7 +216,13 @@ func UpdateTender(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := checkOrganizationResponsibility(c, tender.OrganizationID); err != nil {
+	if tender.OrganizationID == uuid.Nil {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "Организация не указана в тендере",
+		})
+	}
+
+	if err := checkOrganizationResponsibility(db, user.ID, tender.OrganizationID); err != nil {
 		return err
 	}
 
@@ -268,15 +265,25 @@ func UpdateTenderStatus(c *fiber.Ctx) error {
 
 	if tenderID == "" || newStatus == "" || username == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Не указаны обязательные параметры",
+			"error": "Неверный формат запроса или его параметры.",
+		})
+	}
+
+	var status models.StatusType
+	switch models.StatusType(newStatus) {
+	case models.StatusCreated, models.StatusPublished, models.StatusClosed:
+		status = models.StatusType(newStatus)
+	default:
+		return c.Status(400).JSON(fiber.Map{
+			"error": "Некорректное значение статуса.",
 		})
 	}
 
 	var user models.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.Status(400).JSON(fiber.Map{
-				"reason": "Пользователь не найден",
+			return c.Status(401).JSON(fiber.Map{
+				"reason": "Пользователь не существует или некорректен.",
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
@@ -296,11 +303,12 @@ func UpdateTenderStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := checkOrganizationResponsibility(c, tender.OrganizationID); err != nil {
+	c.Locals("user", user)
+	if err := checkOrganizationResponsibility(db, user.ID, tender.OrganizationID); err != nil {
 		return err
 	}
 
-	tender.Status = newStatus
+	tender.Status = status
 	if err := db.Save(&tender).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"error": "Ошибка при обновлении статуса тендера",
@@ -351,7 +359,7 @@ func GetTenderStatus(c *fiber.Ctx) error {
 		if err := db.Where("user_id = ? AND organization_id = ?", user.ID, tender.OrganizationID).First(&orgResp).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return c.Status(403).JSON(fiber.Map{
-					"error": "Нет прав доступа к этому тендеру",
+					"error": "Недостаточно прав для выполнения действия.",
 				})
 			}
 			return c.Status(500).JSON(fiber.Map{
@@ -360,30 +368,26 @@ func GetTenderStatus(c *fiber.Ctx) error {
 		}
 	} else if tender.Status != "PUBLISHED" {
 		return c.Status(403).JSON(fiber.Map{
-			"error": "Нет прав доступа к этому тендеру",
+			"error": "Недостаточно прав для выполнения действия.",
 		})
 	}
 
-	return c.SendString(tender.Status)
+	return c.SendString(string(tender.Status))
 }
 
-// RollbackTender handles the PUT request to rollback a tender to a specific version.
 func RollbackTender(c *fiber.Ctx) error {
 	db := c.Locals("db").(*gorm.DB)
 
-	// Get parameters from the request
 	tenderID := c.Params("tenderId")
 	versionStr := c.Params("version")
 	username := c.Query("username")
 
-	// Validate parameters
 	if tenderID == "" || versionStr == "" || username == "" {
 		return c.Status(400).JSON(fiber.Map{
 			"error": "Не указаны обязательные параметры",
 		})
 	}
 
-	// Parse tender ID and version
 	var tenderUUID uuid.UUID
 	if err := tenderUUID.UnmarshalText([]byte(tenderID)); err != nil {
 		return c.Status(400).JSON(fiber.Map{
@@ -397,7 +401,6 @@ func RollbackTender(c *fiber.Ctx) error {
 		})
 	}
 
-	// Check if the user exists
 	var user models.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -410,7 +413,6 @@ func RollbackTender(c *fiber.Ctx) error {
 		})
 	}
 
-	// Check if the tender exists
 	var tender models.Tender
 	if err := db.First(&tender, "id = ?", tenderUUID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -423,12 +425,10 @@ func RollbackTender(c *fiber.Ctx) error {
 		})
 	}
 
-	// Check if the user is responsible for the organization
-	if err := checkOrganizationResponsibility(c, tender.OrganizationID); err != nil {
+	if err := checkOrganizationResponsibility(db, user.ID, tender.OrganizationID); err != nil {
 		return err
 	}
 
-	// Find the specified tender version
 	var tenderVersion models.TenderVersion
 	if err := db.Where("tender_id = ? AND version = ?", tenderUUID, version).First(&tenderVersion).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -441,18 +441,16 @@ func RollbackTender(c *fiber.Ctx) error {
 		})
 	}
 
-	// Rollback the tender to the specified version
 	tender.Name = tenderVersion.Name
 	tender.Description = tenderVersion.Description
 	tender.ServiceType = tenderVersion.ServiceType
-	tender.Status = tenderVersion.Status
+	tender.Status = models.StatusType(tenderVersion.Status)
 	if err := db.Save(&tender).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"error": "Ошибка при сохранении отката",
 		})
 	}
 
-	// Return the rolled-back tender
 	return c.Status(200).JSON(tender)
 }
 
@@ -463,7 +461,7 @@ func saveTenderVersion(db *gorm.DB, tender models.Tender) error {
 		Name:        tender.Name,
 		Description: tender.Description,
 		ServiceType: tender.ServiceType,
-		Status:      tender.Status,
+		Status:      string(tender.Status),
 	}
 
 	return db.Create(&latestVersion).Error
