@@ -40,6 +40,9 @@ func ConnectDb() {
 
 	log.Println("running migrations")
 	db.AutoMigrate(
+		&models.Employee{},
+		&models.Organization{},
+		&models.OrganizationResponsible{},
 		&models.Bid{},
 		&models.BidVersion{},
 		&models.Review{},
