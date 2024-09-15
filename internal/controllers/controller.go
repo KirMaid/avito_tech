@@ -549,14 +549,21 @@ func RollbackTender(c *fiber.Ctx) error {
 		})
 	}
 
+	var maxVersion int
+	if err := db.Model(&models.TenderVersion{}).Where("tender_id = ?", tender.ID).Select("COALESCE(MAX(version), 0)").Scan(&maxVersion).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"reason": "Ошибка при определении максимальной версии тендера",
+		})
+	}
+
 	newVersion := models.TenderVersion{
 		TenderID:    tender.ID,
-		Version:     tenderVersion.Version + 1,
+		Version:     maxVersion + 1,
 		Name:        tender.Name,
 		Description: tender.Description,
 		ServiceType: tender.ServiceType,
 		Status:      tender.Status,
-		CreatedAt:   time.Now(), // Время создания новой версии
+		CreatedAt:   time.Now(),
 	}
 
 	if err := db.Create(&newVersion).Error; err != nil {
@@ -573,7 +580,7 @@ func RollbackTender(c *fiber.Ctx) error {
 		Status:         tender.Status,
 		OrganizationID: tender.OrganizationID,
 		CreatedAt:      tender.CreatedAt,
-		Version:        newVersion.Version, // Добавляем версию новой записи
+		Version:        newVersion.Version,
 	}
 
 	return c.Status(200).JSON(response)
