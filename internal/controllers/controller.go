@@ -7,6 +7,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"strconv"
 	"zadanie-6105/internal/models"
 )
 
@@ -71,13 +72,13 @@ func CreateTender(c *fiber.Ctx) error {
 	var request CreateTenderRequest
 	if err := c.BodyParser(&request); err != nil {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Некорректный запрос",
+			"reason": "Некорректный запрос",
 		})
 	}
 
 	if err := validate.Struct(&request); err != nil {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Ошибка валидации данных",
+			"reason": "Ошибка валидации данных",
 		})
 	}
 
@@ -85,11 +86,11 @@ func CreateTender(c *fiber.Ctx) error {
 	if err := db.Where("username = ?", request.CreatorUsername).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(400).JSON(fiber.Map{
-				"reason": "Пользователя не существует",
+				"reason": "Пользователь не существует или некорректен.",
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при проверке пользователя",
+			"reason": "Пользователь не существует или некорректен.",
 		})
 	}
 
@@ -97,11 +98,11 @@ func CreateTender(c *fiber.Ctx) error {
 	if err := db.Where("user_id = ? AND organization_id = ?", user.ID, request.OrganizationID).First(&orgResp).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(403).JSON(fiber.Map{
-				"reason": "Пользователь не имеет прав на создание тендера в этой организации",
+				"reason": "Недостаточно прав для выполнения действия.",
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при проверке прав пользователя",
+			"reason": "Ошибка при проверке прав пользователя",
 		})
 	}
 
@@ -117,7 +118,7 @@ func CreateTender(c *fiber.Ctx) error {
 
 	if err := db.Create(&tender).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Не удалось создать тендер",
+			"reason": "Не удалось создать тендер",
 		})
 	}
 
@@ -137,14 +138,29 @@ func CreateTender(c *fiber.Ctx) error {
 func GetMyTenders(c *fiber.Ctx) error {
 	db := c.Locals("db").(*gorm.DB)
 	username := c.Query("username")
+	limitStr := c.Query("limit", "5")   // Значение по умолчанию 5
+	offsetStr := c.Query("offset", "0") // Значение по умолчанию 0
 
 	if username == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Параметр username обязателен",
+			"reason": "Параметр username обязателен",
+		})
+	}
+	// Преобразование параметров limit и offset в целые числа
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "Некорректное значение параметра limit",
 		})
 	}
 
-	// Check if the user exists
+	offset, err := strconv.Atoi(offsetStr)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "Некорректное значение параметра offset",
+		})
+	}
+
 	var user models.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -153,14 +169,16 @@ func GetMyTenders(c *fiber.Ctx) error {
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при проверке пользователя",
+			"reason": "Ошибка при проверке пользователя",
 		})
 	}
 
 	var tenders []models.TenderResponse
-	if err := db.Where("creator_username = ?", username).Find(&tenders).Error; err != nil {
+	query := db.Model(&models.Tender{})
+	query = query.Limit(limit).Offset(offset)
+	if err := query.Where("creator_username = ?", username).Find(&tenders).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при получении тендеров",
+			"reason": "Ошибка при получении тендеров",
 		})
 	}
 
