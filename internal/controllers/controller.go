@@ -8,6 +8,8 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"strconv"
+	"strings"
+	"time"
 	"zadanie-6105/internal/models"
 )
 
@@ -30,7 +32,7 @@ func checkOrganizationResponsibility(db *gorm.DB, userID uuid.UUID, organization
 	var orgResp models.OrganizationResponsible
 	if err := db.Where("user_id = ? AND organization_id = ?", userID, organizationID).First(&orgResp).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fiber.NewError(fiber.StatusForbidden, "Пользователь не имеет доступа")
+			return fiber.NewError(fiber.StatusForbidden, "Недостаточно прав для выполнения действия.")
 		}
 		return fiber.NewError(fiber.StatusInternalServerError, "Ошибка при проверке ответственности за организацию")
 	}
@@ -51,7 +53,7 @@ func GetTenders(c *fiber.Ctx) error {
 
 	if err := query.Find(&tenders).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при получении тендеров",
+			"reason": "Ошибка при получении тендеров",
 		})
 	}
 	return c.Status(200).JSON(tenders)
@@ -102,7 +104,7 @@ func CreateTender(c *fiber.Ctx) error {
 		Name:            request.Name,
 		Description:     request.Description,
 		ServiceType:     request.ServiceType,
-		Status:          models.StatusCreated,
+		Status:          models.TenderStatusCreated,
 		OrganizationID:  request.OrganizationID,
 		CreatorUsername: request.CreatorUsername,
 	}
@@ -188,7 +190,7 @@ func UpdateTender(c *fiber.Ctx) error {
 
 	if tenderID == "" || username == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Не указаны обязательные параметры",
+			"reason": "Данные неправильно сформированы или не соответствуют требованиям.",
 		})
 	}
 
@@ -200,7 +202,7 @@ func UpdateTender(c *fiber.Ctx) error {
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при проверке пользователя",
+			"reason": "Ошибка при проверке пользователя",
 		})
 	}
 
@@ -212,13 +214,7 @@ func UpdateTender(c *fiber.Ctx) error {
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при получении тендера",
-		})
-	}
-
-	if tender.OrganizationID == uuid.Nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Организация не указана в тендере",
+			"reason": "Ошибка при получении тендера",
 		})
 	}
 
@@ -233,8 +229,25 @@ func UpdateTender(c *fiber.Ctx) error {
 	}
 	if err := c.BodyParser(&request); err != nil {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Некорректные данные запроса",
+			"reason": "Некорректные данные запроса",
 		})
+	}
+
+	version := 1
+	var lastVersion models.TenderVersion
+	if err := db.Where("tender_id = ?", tender.ID).Order("version desc").First(&lastVersion).Error; err == nil {
+		version = lastVersion.Version + 1
+	}
+
+	tenderVersion := models.TenderVersion{
+		ID:          uuid.New(),
+		TenderID:    tender.ID,
+		Version:     version,
+		Name:        request.Name,
+		Description: request.Description,
+		ServiceType: request.ServiceType,
+		Status:      tender.Status,
+		CreatedAt:   time.Now(),
 	}
 
 	if request.Name != "" {
@@ -249,7 +262,13 @@ func UpdateTender(c *fiber.Ctx) error {
 
 	if err := db.Save(&tender).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при сохранении изменений",
+			"reason": "Ошибка при сохранении изменений",
+		})
+	}
+
+	if err := db.Create(&tenderVersion).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"reason": "Ошибка при сохранении версии тендера",
 		})
 	}
 
@@ -265,17 +284,19 @@ func UpdateTenderStatus(c *fiber.Ctx) error {
 
 	if tenderID == "" || newStatus == "" || username == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Неверный формат запроса или его параметры.",
+			"reason": "Неверный формат запроса или его параметры.",
 		})
 	}
 
-	var status models.StatusType
-	switch models.StatusType(newStatus) {
-	case models.StatusCreated, models.StatusPublished, models.StatusClosed:
-		status = models.StatusType(newStatus)
+	newStatus = strings.ToUpper(newStatus)
+
+	var status models.TenderStatusType
+	switch models.TenderStatusType(newStatus) {
+	case models.TenderStatusCreated, models.TenderStatusPublished, models.TenderStatusClosed:
+		status = models.TenderStatusType(newStatus)
 	default:
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Некорректное значение статуса.",
+			"reason": "Некорректное значение статуса.",
 		})
 	}
 
@@ -287,7 +308,7 @@ func UpdateTenderStatus(c *fiber.Ctx) error {
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при проверке пользователя",
+			"reason": "Ошибка при проверке пользователя",
 		})
 	}
 
@@ -299,7 +320,7 @@ func UpdateTenderStatus(c *fiber.Ctx) error {
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при получении тендера",
+			"reason": "Ошибка при получении тендера",
 		})
 	}
 
@@ -311,7 +332,7 @@ func UpdateTenderStatus(c *fiber.Ctx) error {
 	tender.Status = status
 	if err := db.Save(&tender).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при обновлении статуса тендера",
+			"reason": "Ошибка при обновлении статуса тендера",
 		})
 	}
 
@@ -326,7 +347,7 @@ func GetTenderStatus(c *fiber.Ctx) error {
 
 	if username == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Параметр username обязателен",
+			"reason": "Параметр username обязателен",
 		})
 	}
 
@@ -338,7 +359,7 @@ func GetTenderStatus(c *fiber.Ctx) error {
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при проверке пользователя",
+			"reason": "Ошибка при проверке пользователя",
 		})
 	}
 
@@ -350,7 +371,7 @@ func GetTenderStatus(c *fiber.Ctx) error {
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при получении тендера",
+			"reason": "Ошибка при получении тендера",
 		})
 	}
 
@@ -359,16 +380,16 @@ func GetTenderStatus(c *fiber.Ctx) error {
 		if err := db.Where("user_id = ? AND organization_id = ?", user.ID, tender.OrganizationID).First(&orgResp).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return c.Status(403).JSON(fiber.Map{
-					"error": "Недостаточно прав для выполнения действия.",
+					"reason": "Недостаточно прав для выполнения действия.",
 				})
 			}
 			return c.Status(500).JSON(fiber.Map{
-				"error": "Ошибка при проверке ответственности за организацию",
+				"reason": "Ошибка при проверке ответственности за организацию",
 			})
 		}
 	} else if tender.Status != "PUBLISHED" {
 		return c.Status(403).JSON(fiber.Map{
-			"error": "Недостаточно прав для выполнения действия.",
+			"reason": "Недостаточно прав для выполнения действия.",
 		})
 	}
 
@@ -384,32 +405,33 @@ func RollbackTender(c *fiber.Ctx) error {
 
 	if tenderID == "" || versionStr == "" || username == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Не указаны обязательные параметры",
+			"reason": "Неверный формат запроса или его параметры.",
 		})
 	}
 
 	var tenderUUID uuid.UUID
 	if err := tenderUUID.UnmarshalText([]byte(tenderID)); err != nil {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Некорректный ID тендера",
+			"reason": "Неверный формат запроса или его параметры.",
 		})
 	}
+
 	var version int
 	if _, err := fmt.Sscan(versionStr, &version); err != nil {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Некорректная версия",
+			"reason": "Неверный формат запроса или его параметры.",
 		})
 	}
 
 	var user models.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.Status(400).JSON(fiber.Map{
-				"reason": "Пользователь не найден",
+			return c.Status(401).JSON(fiber.Map{
+				"reason": "Пользователь не существует или некорректен.",
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при проверке пользователя",
+			"reason": "Ошибка при проверке пользователя",
 		})
 	}
 
@@ -421,7 +443,7 @@ func RollbackTender(c *fiber.Ctx) error {
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при получении тендера",
+			"reason": "Ошибка при получении тендера",
 		})
 	}
 
@@ -437,104 +459,143 @@ func RollbackTender(c *fiber.Ctx) error {
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при получении версии тендера",
+			"reason": "Ошибка при получении версии тендера",
 		})
 	}
 
 	tender.Name = tenderVersion.Name
 	tender.Description = tenderVersion.Description
 	tender.ServiceType = tenderVersion.ServiceType
-	tender.Status = models.StatusType(tenderVersion.Status)
+	tender.Status = tenderVersion.Status
+
 	if err := db.Save(&tender).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при сохранении отката",
+			"reason": "Ошибка при сохранении изменений тендера",
+		})
+	}
+
+	newVersion := models.TenderVersion{
+		TenderID:    tender.ID,
+		Version:     tenderVersion.Version + 1,
+		Name:        tender.Name,
+		Description: tender.Description,
+		ServiceType: tender.ServiceType,
+		Status:      tender.Status,
+		CreatedAt:   time.Now(), // Время создания новой версии
+	}
+
+	if err := db.Create(&newVersion).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"reason": "Ошибка при создании новой версии тендера",
 		})
 	}
 
 	return c.Status(200).JSON(tender)
 }
 
-func saveTenderVersion(db *gorm.DB, tender models.Tender) error {
-	latestVersion := models.TenderVersion{
-		TenderID:    tender.ID,
-		Version:     getNewVersion(db, tender.ID),
-		Name:        tender.Name,
-		Description: tender.Description,
-		ServiceType: tender.ServiceType,
-		Status:      string(tender.Status),
-	}
-
-	return db.Create(&latestVersion).Error
-}
-
-func getNewVersion(db *gorm.DB, tenderID uuid.UUID) int {
-	var lastVersion models.TenderVersion
-	db.Where("tender_id = ?", tenderID).Order("version desc").First(&lastVersion)
-	return lastVersion.Version + 1
-}
-
 func CreateBid(c *fiber.Ctx) error {
 	db := c.Locals("db").(*gorm.DB)
 
 	type CreateBidInput struct {
-		Name            string `json:"name" validate:"required"`
-		Description     string `json:"description"`
-		Status          string `json:"status" validate:"required"`
-		TenderID        string `json:"tenderId" validate:"required"`
-		OrganizationID  string `json:"organizationId" validate:"required"`
-		CreatorUsername string `json:"creatorUsername" validate:"required"`
+		Name        string `json:"name" validate:"required"`
+		Description string `json:"description"`
+		TenderID    string `json:"tenderId" validate:"required"`
+		AuthorType  string `json:"authorType" validate:"required"`
+		AuthorID    string `json:"authorId" validate:"required"`
 	}
 
 	var input CreateBidInput
 	if err := c.BodyParser(&input); err != nil {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Некорректные данные запроса",
+			"reason": "Неверный формат запроса или его параметры.",
 		})
 	}
 
-	// Проверка существования тендера
+	tenderID, err := uuid.Parse(input.TenderID)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"reason": "Неверный формат запроса или его параметры.",
+		})
+	}
+
+	var authorType models.AuthorType
+	switch input.AuthorType {
+	case "User":
+		authorType = models.AuthorTypeUser
+	case "Organization":
+		authorType = models.AuthorTypeOrganization
+	default:
+		return c.Status(400).JSON(fiber.Map{
+			"reason": "Неверный формат запроса или его параметры.",
+		})
+	}
+
+	authorID, err := uuid.Parse(input.AuthorID)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"reason": "Неверный формат запроса или его параметры.",
+		})
+	}
+
 	var tender models.Tender
-	if err := db.First(&tender, "id = ?", input.TenderID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+	if err := db.First(&tender, "id = ?", tenderID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(404).JSON(fiber.Map{
-				"error": "Тендер не найден",
+				"reason": "Тендер не найден",
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при поиске тендера",
+			"reason": "Ошибка при поиске тендера",
 		})
 	}
 
-	// Проверка существования организации
 	var organization models.Organization
-	if err := db.First(&organization, "id = ?", input.OrganizationID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+	if err := db.First(&organization, "id = ?", authorID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(404).JSON(fiber.Map{
-				"error": "Организация не найдена",
+				"reason": "Организация не найдена",
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при поиске организации",
+			"reason": "Ошибка при поиске организации",
+		})
+	}
+
+	if organization.ID != tender.OrganizationID {
+		return c.Status(403).JSON(fiber.Map{
+			"reason": "Недостаточно прав для выполнения действия.",
 		})
 	}
 
 	bid := models.Bid{
-		Name:            input.Name,
-		Description:     input.Description,
-		Status:          input.Status,
-		TenderID:        uuid.MustParse(input.TenderID),
-		OrganizationID:  uuid.MustParse(input.OrganizationID),
-		CreatorUsername: input.CreatorUsername,
+		Name:        input.Name,
+		Description: input.Description,
+		Status:      models.BidStatusCreated,
+		TenderID:    tenderID,
+		AuthorType:  authorType,
+		AuthorID:    authorID,
+		Version:     1,
 	}
 
 	if err := db.Create(&bid).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при создании предложения",
+			"reason": "Ошибка при создании предложения",
 		})
 	}
 
-	// Возвращаем созданное предложение
-	return c.Status(200).JSON(bid)
+	response := fiber.Map{
+		"id":          bid.ID.String(),
+		"name":        bid.Name,
+		"description": bid.Description,
+		"status":      "Created",
+		"tenderId":    bid.TenderID.String(),
+		"createdAt":   bid.CreatedAt.Format(time.RFC3339),
+		"authorType":  input.AuthorType,
+		"authorId":    bid.AuthorID.String(),
+		"version":     bid.Version,
+	}
+
+	return c.Status(200).JSON(response)
 }
 
 func GetUserBids(c *fiber.Ctx) error {
@@ -543,14 +604,14 @@ func GetUserBids(c *fiber.Ctx) error {
 	username := c.Query("username")
 	if username == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Не указан username",
+			"reason": "Не указан username",
 		})
 	}
 
 	var bids []models.Bid
 	if err := db.Where("creator_username = ?", username).Find(&bids).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при получении предложений",
+			"reason": "Ошибка при получении предложений",
 		})
 	}
 
@@ -563,14 +624,14 @@ func GetTenderBids(c *fiber.Ctx) error {
 	tenderID := c.Params("tenderId")
 	if tenderID == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Не указан tenderId",
+			"reason": "Не указан tenderId",
 		})
 	}
 
 	var bids []models.Bid
 	if err := db.Where("tender_id = ?", tenderID).Find(&bids).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при получении предложений для тендера",
+			"reason": "Ошибка при получении предложений для тендера",
 		})
 	}
 
@@ -585,7 +646,7 @@ func RollbackBidVersion(c *fiber.Ctx) error {
 
 	if bidID == "" || version == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Не указан bidId или версия",
+			"reason": "Не указан bidId или версия",
 		})
 	}
 
@@ -593,18 +654,18 @@ func RollbackBidVersion(c *fiber.Ctx) error {
 	if err := db.Where("bid_id = ? AND version = ?", uuid.MustParse(bidID), version).First(&bidVersion).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return c.Status(404).JSON(fiber.Map{
-				"error": "Версия предложения не найдена",
+				"reason": "Версия предложения не найдена",
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при поиске версии предложения",
+			"reason": "Ошибка при поиске версии предложения",
 		})
 	}
 
 	var bid models.Bid
 	if err := db.First(&bid, "id = ?", uuid.MustParse(bidID)).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при поиске предложения",
+			"reason": "Ошибка при поиске предложения",
 		})
 	}
 
@@ -615,7 +676,7 @@ func RollbackBidVersion(c *fiber.Ctx) error {
 
 	if err := db.Save(&bid).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при сохранении отката",
+			"reason": "Ошибка при сохранении отката",
 		})
 	}
 
@@ -628,7 +689,7 @@ func EditBid(c *fiber.Ctx) error {
 	bidID := c.Params("bidId")
 	if bidID == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Не указан bidId",
+			"reason": "Не указан bidId",
 		})
 	}
 
@@ -640,14 +701,14 @@ func EditBid(c *fiber.Ctx) error {
 	var input EditBidInput
 	if err := c.BodyParser(&input); err != nil {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Некорректные данные запроса",
+			"reason": "Некорректные данные запроса",
 		})
 	}
 
 	var bid models.Bid
 	if err := db.First(&bid, "id = ?", uuid.MustParse(bidID)).Error; err != nil {
 		return c.Status(404).JSON(fiber.Map{
-			"error": "Предложение не найдено",
+			"reason": "Предложение не найдено",
 		})
 	}
 
@@ -663,7 +724,7 @@ func EditBid(c *fiber.Ctx) error {
 
 	if err := db.Create(&bidVersion).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при сохранении версии предложения",
+			"reason": "Ошибка при сохранении версии предложения",
 		})
 	}
 
@@ -673,7 +734,7 @@ func EditBid(c *fiber.Ctx) error {
 
 	if err := db.Save(&bid).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при обновлении предложения",
+			"reason": "Ошибка при обновлении предложения",
 		})
 	}
 
@@ -689,14 +750,14 @@ func GetBidReviews(c *fiber.Ctx) error {
 
 	if tenderID == "" || authorUsername == "" || organizationID == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Не указаны обязательные параметры",
+			"reason": "Не указаны обязательные параметры",
 		})
 	}
 
 	var reviews []models.Review
 	if err := db.Where("bid_id = ? AND author_username = ? AND organization_id = ?", uuid.MustParse(tenderID), authorUsername, uuid.MustParse(organizationID)).Find(&reviews).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при получении отзывов",
+			"reason": "Ошибка при получении отзывов",
 		})
 	}
 
