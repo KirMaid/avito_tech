@@ -7,3 +7,7 @@ type OrganizationResponsible struct {
 	OrganizationID uuid.UUID `gorm:"type:uuid;not null"`
 	UserID         uuid.UUID `gorm:"type:uuid;not null"`
 }
+
+func (OrganizationResponsible) TableName() string {
+	return "organization_responsible"
+}
