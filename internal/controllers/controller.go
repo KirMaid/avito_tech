@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"errors"
+	"fmt"
 	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -26,9 +27,8 @@ type UpdateTenderRequest struct {
 
 func checkOrganizationResponsibility(c *fiber.Ctx, organizationID uuid.UUID) error {
 	db := c.Locals("db").(*gorm.DB)
-	userID := c.Locals("userID").(uuid.UUID) // Предположим, что userID хранится в локалах
+	userID := c.Locals("userID").(uuid.UUID)
 
-	// Проверяем, является ли пользователь ответственным за организацию
 	var orgResp models.OrganizationResponsible
 	if err := db.Where("user_id = ? AND organization_id = ?", userID, organizationID).First(&orgResp).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -81,7 +81,6 @@ func CreateTender(c *fiber.Ctx) error {
 		})
 	}
 
-	// Check if the user exists
 	var user models.Employee
 	if err := db.Where("username = ?", request.CreatorUsername).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -95,20 +94,14 @@ func CreateTender(c *fiber.Ctx) error {
 	}
 
 	var orgResp models.OrganizationResponsible
-	if err := db.Where("user_id = ?", user.ID).First(&orgResp).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return c.Status(400).JSON(fiber.Map{
-				"reason": "Организация пользователя не найдена",
+	if err := db.Where("user_id = ? AND organization_id = ?", user.ID, request.OrganizationID).First(&orgResp).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(403).JSON(fiber.Map{
+				"reason": "Пользователь не имеет прав на создание тендера в этой организации",
 			})
 		}
 		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при проверке организации пользователя",
-		})
-	}
-
-	if orgResp.OrganizationID != request.OrganizationID {
-		return c.Status(400).JSON(fiber.Map{
-			"reason": "Организация пользователя не совпадает с указанной в запросе",
+			"error": "Ошибка при проверке прав пользователя",
 		})
 	}
 
@@ -182,64 +175,14 @@ func UpdateTender(c *fiber.Ctx) error {
 	db := c.Locals("db").(*gorm.DB)
 
 	tenderID := c.Params("tenderId")
-
-	var tenderUUID uuid.UUID
-	if err := tenderUUID.UnmarshalText([]byte(tenderID)); err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Некорректный ID тендера",
-		})
-	}
-
-	var tender models.Tender
-	if err := db.First(&tender, "id = ?", tenderUUID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return c.Status(404).JSON(fiber.Map{
-				"error": "Тендер не найден",
-			})
-		}
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при получении тендера",
-		})
-	}
-
-	var request UpdateTenderRequest
-	if err := c.BodyParser(&request); err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Некорректные данные запроса",
-		})
-	}
-
-	if request.Name != "" {
-		tender.Name = request.Name
-	}
-	if request.Description != "" {
-		tender.Description = request.Description
-	}
-
-	if err := db.Save(&tender).Error; err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при сохранении изменений",
-		})
-	}
-
-	return c.Status(200).JSON(tender)
-}
-
-func GetTenderStatus(c *fiber.Ctx) error {
-	db := c.Locals("db").(*gorm.DB)
-
-	// Получение параметров из запроса
-	tenderID := c.Params("tenderId")
 	username := c.Query("username")
 
-	// Проверка наличия username в запросе
-	if username == "" {
+	if tenderID == "" || username == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Параметр username обязателен",
+			"error": "Не указаны обязательные параметры",
 		})
 	}
 
-	// Проверка существования пользователя
 	var user models.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -252,7 +195,6 @@ func GetTenderStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	// Проверка существования тендера
 	var tender models.Tender
 	if err := db.First(&tender, "id = ?", tenderID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -265,65 +207,30 @@ func GetTenderStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	// Проверка прав доступа пользователя к тендеру
-	/*if tender.Status == "CREATED" || tender.Status == "CLOSED" {
-		// Если тендер в статусе CREATED или CLOSED, проверяем, является ли пользователь ответственным за организацию
-		if user.OrganizationID != tender.OrganizationID {
-			return c.Status(403).JSON(fiber.Map{
-				"error": "Нет прав доступа к этому тендеру",
-			})
-		}
-	} else if tender.Status == "PUBLISHED" {
-		// Если тендер в статусе PUBLISHED, доступен всем пользователям
-		// Никакой дополнительной проверки не требуется
-	} else {
-		// Для всех других статусов доступ запрещён
-		return c.Status(403).JSON(fiber.Map{
-			"error": "Нет прав доступа к этому тендеру",
-		})
-	}*/
+	if err := checkOrganizationResponsibility(c, tender.OrganizationID); err != nil {
+		return err
+	}
 
-	// Возвращаем статус тендера
-	return c.SendString(tender.Status)
-}
-
-func RollbackTender(c *fiber.Ctx) error {
-	db := c.Locals("db").(*gorm.DB)
-
-	tenderID := c.Params("tenderId")
-	version := c.Params("version")
-
-	// Проверка, являются ли корректными UUID и версия
-	var tenderUUID uuid.UUID
-	if err := tenderUUID.UnmarshalText([]byte(tenderID)); err != nil {
+	var request struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		ServiceType string `json:"serviceType"`
+	}
+	if err := c.BodyParser(&request); err != nil {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Некорректный ID тендера",
+			"error": "Некорректные данные запроса",
 		})
 	}
 
-	var tenderVersion models.TenderVersion
-	if err := db.Where("tender_id = ? AND version = ?", tenderUUID, version).First(&tenderVersion).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return c.Status(404).JSON(fiber.Map{
-				"error": "Версия не найдена",
-			})
-		}
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Ошибка при получении версии тендера",
-		})
+	if request.Name != "" {
+		tender.Name = request.Name
 	}
-
-	var tender models.Tender
-	if err := db.First(&tender, "id = ?", tenderUUID).Error; err != nil {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "Тендер не найден",
-		})
+	if request.Description != "" {
+		tender.Description = request.Description
 	}
-
-	tender.Name = tenderVersion.Name
-	tender.Description = tenderVersion.Description
-	tender.ServiceType = tenderVersion.ServiceType
-	tender.Status = tenderVersion.Status
+	if request.ServiceType != "" {
+		tender.ServiceType = request.ServiceType
+	}
 
 	if err := db.Save(&tender).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
@@ -331,6 +238,203 @@ func RollbackTender(c *fiber.Ctx) error {
 		})
 	}
 
+	return c.Status(200).JSON(tender)
+}
+
+func UpdateTenderStatus(c *fiber.Ctx) error {
+	db := c.Locals("db").(*gorm.DB)
+
+	tenderID := c.Params("tenderId")
+	newStatus := c.Query("status")
+	username := c.Query("username")
+
+	if tenderID == "" || newStatus == "" || username == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "Не указаны обязательные параметры",
+		})
+	}
+
+	var user models.Employee
+	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(400).JSON(fiber.Map{
+				"reason": "Пользователь не найден",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при проверке пользователя",
+		})
+	}
+
+	var tender models.Tender
+	if err := db.First(&tender, "id = ?", tenderID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(fiber.Map{
+				"reason": "Тендер не найден",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при получении тендера",
+		})
+	}
+
+	if err := checkOrganizationResponsibility(c, tender.OrganizationID); err != nil {
+		return err
+	}
+
+	tender.Status = newStatus
+	if err := db.Save(&tender).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при обновлении статуса тендера",
+		})
+	}
+
+	return c.Status(200).JSON(tender)
+}
+
+func GetTenderStatus(c *fiber.Ctx) error {
+	db := c.Locals("db").(*gorm.DB)
+
+	tenderID := c.Params("tenderId")
+	username := c.Query("username")
+
+	if username == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "Параметр username обязателен",
+		})
+	}
+
+	var user models.Employee
+	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(400).JSON(fiber.Map{
+				"reason": "Пользователь не найден",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при проверке пользователя",
+		})
+	}
+
+	var tender models.Tender
+	if err := db.First(&tender, "id = ?", tenderID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(fiber.Map{
+				"reason": "Тендер не найден",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при получении тендера",
+		})
+	}
+
+	if tender.Status == "CREATED" || tender.Status == "CLOSED" {
+		var orgResp models.OrganizationResponsible
+		if err := db.Where("user_id = ? AND organization_id = ?", user.ID, tender.OrganizationID).First(&orgResp).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return c.Status(403).JSON(fiber.Map{
+					"error": "Нет прав доступа к этому тендеру",
+				})
+			}
+			return c.Status(500).JSON(fiber.Map{
+				"error": "Ошибка при проверке ответственности за организацию",
+			})
+		}
+	} else if tender.Status != "PUBLISHED" {
+		return c.Status(403).JSON(fiber.Map{
+			"error": "Нет прав доступа к этому тендеру",
+		})
+	}
+
+	return c.SendString(tender.Status)
+}
+
+// RollbackTender handles the PUT request to rollback a tender to a specific version.
+func RollbackTender(c *fiber.Ctx) error {
+	db := c.Locals("db").(*gorm.DB)
+
+	// Get parameters from the request
+	tenderID := c.Params("tenderId")
+	versionStr := c.Params("version")
+	username := c.Query("username")
+
+	// Validate parameters
+	if tenderID == "" || versionStr == "" || username == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "Не указаны обязательные параметры",
+		})
+	}
+
+	// Parse tender ID and version
+	var tenderUUID uuid.UUID
+	if err := tenderUUID.UnmarshalText([]byte(tenderID)); err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "Некорректный ID тендера",
+		})
+	}
+	var version int
+	if _, err := fmt.Sscan(versionStr, &version); err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "Некорректная версия",
+		})
+	}
+
+	// Check if the user exists
+	var user models.Employee
+	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(400).JSON(fiber.Map{
+				"reason": "Пользователь не найден",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при проверке пользователя",
+		})
+	}
+
+	// Check if the tender exists
+	var tender models.Tender
+	if err := db.First(&tender, "id = ?", tenderUUID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(fiber.Map{
+				"reason": "Тендер не найден",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при получении тендера",
+		})
+	}
+
+	// Check if the user is responsible for the organization
+	if err := checkOrganizationResponsibility(c, tender.OrganizationID); err != nil {
+		return err
+	}
+
+	// Find the specified tender version
+	var tenderVersion models.TenderVersion
+	if err := db.Where("tender_id = ? AND version = ?", tenderUUID, version).First(&tenderVersion).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(fiber.Map{
+				"reason": "Версия тендера не найдена",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при получении версии тендера",
+		})
+	}
+
+	// Rollback the tender to the specified version
+	tender.Name = tenderVersion.Name
+	tender.Description = tenderVersion.Description
+	tender.ServiceType = tenderVersion.ServiceType
+	tender.Status = tenderVersion.Status
+	if err := db.Save(&tender).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Ошибка при сохранении отката",
+		})
+	}
+
+	// Return the rolled-back tender
 	return c.Status(200).JSON(tender)
 }
 

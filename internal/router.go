@@ -18,7 +18,9 @@ func SetupRoutes(app *fiber.App) {
 
 	app.Patch("/api/tenders/:tenderId/edit", controllers.UpdateTender)
 
-	app.Get("/api//tenders/:tenderId/status", controllers.GetTenderStatus)
+	app.Get("/api/tenders/:tenderId/status", controllers.GetTenderStatus)
+
+	app.Put("/api/tenders/:tenderId/status", controllers.UpdateTenderStatus)
 
 	app.Put("/api/tenders/:tenderId/rollback/:version", controllers.RollbackTender)
 
