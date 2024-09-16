@@ -8,9 +8,9 @@ import (
 type BidStatusType string
 
 const (
-	BidStatusCreated   BidStatusType = "Created"
-	BidStatusPublished BidStatusType = "Published"
-	BidStatusCanceled  BidStatusType = "Canceled"
+	BidStatusCreated   BidStatusType = "CREATED"
+	BidStatusPublished BidStatusType = "PUBLISHED"
+	BidStatusCanceled  BidStatusType = "CANCELED"
 )
 
 type Bid struct {
