@@ -27,25 +27,6 @@ func checkOrganizationResponsibility(db *gorm.DB, userID uuid.UUID, organization
 	return nil
 }
 
-func GetTenders(c *fiber.Ctx) error {
-	db := c.Locals("db").(*gorm.DB)
-
-	var tenders []models.Tender
-	serviceType := c.Query("serviceType")
-
-	query := db.Model(&models.Tender{})
-	if serviceType != "" {
-		query = query.Where("service_type = ?", serviceType)
-	}
-
-	if err := query.Find(&tenders).Error; err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"reason": "Ошибка при получении тендеров",
-		})
-	}
-	return c.Status(200).JSON(tenders)
-}
-
 func CreateTender(c *fiber.Ctx) error {
 	db := c.Locals("db").(*gorm.DB)
 
@@ -180,7 +161,11 @@ func GetMyTenders(c *fiber.Ctx) error {
 	}
 
 	var tenders []models.Tender
-	if err := db.Where("creator_username = ?", username).Limit(limit).Offset(offset).Find(&tenders).Error; err != nil {
+	if err := db.Where("creator_username = ?", username).
+		Order("name ASC").
+		Limit(limit).
+		Offset(offset).
+		Find(&tenders).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"reason": "Ошибка при получении тендеров",
 		})
@@ -190,20 +175,20 @@ func GetMyTenders(c *fiber.Ctx) error {
 		return c.Status(200).JSON([]fiber.Map{})
 	}
 
-	// Получение всех версий тендеров
 	var tenderVersions []models.TenderVersion
 	tenderIDs := make([]uuid.UUID, len(tenders))
 	for i, tender := range tenders {
 		tenderIDs[i] = tender.ID
 	}
 
-	if err := db.Where("tender_id IN ?", tenderIDs).Order("version DESC").Find(&tenderVersions).Error; err != nil {
+	if err := db.Where("tender_id IN ?", tenderIDs).
+		Order("version DESC").
+		Find(&tenderVersions).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"reason": "Ошибка при получении версий тендеров",
 		})
 	}
 
-	// Создание ответа
 	var response []fiber.Map
 	for _, tender := range tenders {
 		// Фильтруем версии для текущего тендера
@@ -228,6 +213,103 @@ func GetMyTenders(c *fiber.Ctx) error {
 
 			response = append(response, tenderData)
 		}
+	}
+
+	return c.Status(200).JSON(response)
+}
+
+func GetTenders(c *fiber.Ctx) error {
+	db := c.Locals("db").(*gorm.DB)
+
+	limitStr := c.Query("limit", "5")   // Значение по умолчанию 5
+	offsetStr := c.Query("offset", "0") // Значение по умолчанию 0
+	serviceType := c.Query("serviceType")
+	statusFilter := c.Query("status")
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"reason": "Некорректное значение параметра limit",
+		})
+	}
+
+	offset, err := strconv.Atoi(offsetStr)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"reason": "Некорректное значение параметра offset",
+		})
+	}
+
+	var tenders []models.Tender
+	query := db.Model(&models.Tender{}).Limit(limit).Offset(offset)
+
+	if serviceType != "" {
+		query = query.Where("service_type = ?", serviceType)
+	}
+
+	if statusFilter == "PUBLISHED" {
+		query = query.Where("status = ?", "PUBLISHED")
+	}
+
+	if err := query.Find(&tenders).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"reason": "Ошибка при получении тендеров",
+		})
+	}
+
+	if len(tenders) == 0 {
+		return c.Status(200).JSON([]fiber.Map{})
+	}
+
+	var latestTenderVersions []models.TenderVersion
+	tenderIDs := make([]uuid.UUID, len(tenders))
+	for i, tender := range tenders {
+		tenderIDs[i] = tender.ID
+	}
+
+	if err := db.Model(&models.TenderVersion{}).
+		Select("tender_id, MAX(version) as version").
+		Where("tender_id IN ?", tenderIDs).
+		Group("tender_id").
+		Order("name ASC"). // Сортировка по имени на уровне SQL
+		Find(&latestTenderVersions).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"reason": "Ошибка при получении актуальных версий тендеров",
+		})
+	}
+
+	versionMap := make(map[uuid.UUID]int)
+	for _, version := range latestTenderVersions {
+		versionMap[version.TenderID] = version.Version
+	}
+
+	var response []fiber.Map
+	for _, tender := range tenders {
+		version, exists := versionMap[tender.ID]
+		if !exists {
+			continue
+		}
+
+		var tenderVersion models.TenderVersion
+		if err := db.Where("tender_id = ? AND version = ?", tender.ID, version).
+			First(&tenderVersion).Error; err != nil {
+			return c.Status(500).JSON(fiber.Map{
+				"reason": "Ошибка при получении версии тендера",
+			})
+		}
+
+		tenderData := fiber.Map{
+			"id":             tender.ID,
+			"name":           tender.Name,
+			"description":    tender.Description,
+			"serviceType":    tender.ServiceType,
+			"status":         tender.Status,
+			"organizationId": tender.OrganizationID,
+			"createdAt":      tender.CreatedAt,
+			"version":        tenderVersion.Version,
+		}
+
+		response = append(response, tenderData)
 	}
 
 	return c.Status(200).JSON(response)
