@@ -14,7 +14,7 @@ func SetupRoutes(app *fiber.App) {
 
 	app.Post("/api/tenders/new", controllers.CreateTender)
 
-	app.Get("/api/tenders/my", controllers.GetMyTenders)
+	app.Get("/api/tenders/my", controllers.GetUserTenders)
 
 	app.Patch("/api/tenders/:tenderId/edit", controllers.UpdateTender)
 

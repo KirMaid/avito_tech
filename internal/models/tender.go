@@ -23,4 +23,5 @@ type Tender struct {
 	CreatedAt       time.Time        `gorm:"autoCreateTime" json:"createdAt" :"created_at"`
 	UpdatedAt       time.Time        `gorm:"autoUpdateTime" json:"updated_at" :"updated_at"`
 	CreatorUsername string           `json:"creatorUsername" validate:"required"`
+	Version         int              `json:"version"`
 }
