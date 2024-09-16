@@ -28,7 +28,7 @@ func SetupRoutes(app *fiber.App) {
 
 	app.Get("/api/bids/my", controllers.GetUserBids)
 
-	app.Put("/api/bids/:bidId/rollback/:version", controllers.RollbackBidVersion)
+	app.Get("/api/bids/:bidId/status", controllers.GetBidStatus)
 
-	app.Get("/api/bids/:tenderId/reviews", controllers.GetBidReviews)
+	app.Put("/api/bids/:bidId/status", controllers.UpdateBidStatus)
 }
