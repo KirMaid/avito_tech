@@ -32,13 +32,13 @@ func ConnectDb() {
 
 	if err != nil {
 		log.Fatal("Failed to connect to database. \n", err)
-		os.Exit(1)
 	}
 
 	log.Println("connected")
 	db.Logger = logger.Default.LogMode(logger.Info)
 
 	log.Println("running migrations")
+	//TODO Добавить обработку ошибок
 	db.AutoMigrate(
 		&models.Employee{},
 		&models.Organization{},

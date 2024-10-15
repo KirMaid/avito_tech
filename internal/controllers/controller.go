@@ -13,6 +13,7 @@ import (
 	"zadanie-6105/internal/models"
 )
 
+// TODO Отрефакторить контроллер, вынести в 2 отдельных
 var validate = validator.New()
 
 func checkOrganizationResponsibility(db *gorm.DB, userID uuid.UUID, organizationID uuid.UUID) error {
@@ -86,6 +87,7 @@ func CreateTender(c *fiber.Ctx) error {
 		Version:         1,
 	}
 
+	//TODO Добавить транзакцию
 	if err := db.Create(&tender).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"reason": "Не удалось создать тендер",
@@ -178,6 +180,7 @@ func GetUserTenders(c *fiber.Ctx) error {
 
 	var response []fiber.Map
 
+	//TODO Оптимизировать по запросам
 	for _, tender := range tenders {
 		var tenderVersions []models.TenderVersion
 		if err := db.Where("tender_id = ?", tender.ID).
