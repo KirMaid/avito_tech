@@ -45,5 +45,27 @@
 - Отрефакторить код
 - Добавить тесты
 - Линтер
+- Разбить на микросервисы: 
+  - User Service
+  - Organization Service
+  - Tender Service
+  - Bid Service
+  - Review Service
+- Добавить брокер сообщений для событий:
+  - TenderCreated: Генерируется Tender Service при создании тендера.
+    - Подписчики: Bid Service, Review Service.
+  - BidCreated: Генерируется Bid Service при создании предложения.
+    - Подписчики: Tender Service, Review Service.
+  - ReviewCreated: Генерируется Review Service при создании отзыва.
+    - Подписчики: Tender Service.
+  - Пример работы такого сервиса:
+    - Создание тендера:
+      - HTTP-запрос к Tender Service.
+      - Tender Service публикует событие TenderCreated в RabbitMQ.
+      - Bid Service и Review Service получают событие и обновляют свои данные.
+    - Создание предложения:
+      - HTTP-запрос к Bid Service.
+      - Bid Service публикует событие BidCreated в RabbitMQ.
+      - Tender Service и Review Service обрабатывают событие.
 
 
