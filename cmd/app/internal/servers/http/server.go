@@ -1,12 +1,11 @@
-package app
+package http
 
 import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/joho/godotenv"
 	"log"
 	"os"
-	"zadanie-6105/internal"
-	"zadanie-6105/internal/storage/postgres"
+	"zadanie-6105/cmd/app/internal/storage/postgresql"
 )
 
 func Run() {
@@ -14,13 +13,13 @@ func Run() {
 	if err != nil {
 		log.Fatalf("Ошибка загрузки .env файла: %v", err)
 	}
-	postgres.ConnectDb()
+	postgresql.ConnectDb()
 	app := fiber.New()
 	app.Use(func(c *fiber.Ctx) error {
-		c.Locals("db", postgres.DB.Db)
+		c.Locals("db", postgresql.DB.Db)
 		return c.Next()
 	})
-	internal.SetupRoutes(app)
+	SetupRoutes(app)
 	serverAddress := os.Getenv("SERVER_ADDRESS")
 	if serverAddress == "" {
 		serverAddress = ":8080"

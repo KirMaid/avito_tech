@@ -1,7 +1,9 @@
 package main
 
-import "zadanie-6105/internal/app"
+import (
+	"zadanie-6105/cmd/app/internal/servers/http"
+)
 
 func main() {
-	app.Run()
+	http.Run()
 }
