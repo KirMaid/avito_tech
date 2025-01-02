@@ -1,4 +1,4 @@
-package controllers
+package http
 
 import (
 	"errors"
@@ -10,14 +10,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"zadanie-6105/internal/models"
+	models2 "zadanie-6105/cmd/app/internal/models"
 )
 
 // TODO Отрефакторить контроллер, вынести в 2 отдельных
 var validate = validator.New()
 
 func checkOrganizationResponsibility(db *gorm.DB, userID uuid.UUID, organizationID uuid.UUID) error {
-	var orgResp models.OrganizationResponsible
+	var orgResp models2.OrganizationResponsible
 	if err := db.Where("user_id = ? AND organization_id = ?", userID, organizationID).First(&orgResp).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fiber.NewError(fiber.StatusForbidden, "Недостаточно прав для выполнения действия.")
@@ -52,7 +52,7 @@ func CreateTender(c *fiber.Ctx) error {
 		})
 	}
 
-	var user models.Employee
+	var user models2.Employee
 	if err := db.Where("username = ?", request.CreatorUsername).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(401).JSON(fiber.Map{
@@ -64,7 +64,7 @@ func CreateTender(c *fiber.Ctx) error {
 		})
 	}
 
-	var orgResp models.OrganizationResponsible
+	var orgResp models2.OrganizationResponsible
 	if err := db.Where("user_id = ? AND organization_id = ?", user.ID, request.OrganizationID).First(&orgResp).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(403).JSON(fiber.Map{
@@ -76,12 +76,12 @@ func CreateTender(c *fiber.Ctx) error {
 		})
 	}
 
-	tender := models.Tender{
+	tender := models2.Tender{
 		ID:              uuid.New(),
 		Name:            request.Name,
 		Description:     request.Description,
 		ServiceType:     request.ServiceType,
-		Status:          models.TenderStatusCreated,
+		Status:          models2.TenderStatusCreated,
 		OrganizationID:  request.OrganizationID,
 		CreatorUsername: request.CreatorUsername,
 		Version:         1,
@@ -95,7 +95,7 @@ func CreateTender(c *fiber.Ctx) error {
 	}
 
 	// Запись в таблицу версий
-	tenderVersion := models.TenderVersion{
+	tenderVersion := models2.TenderVersion{
 		ID:          uuid.New(),
 		TenderID:    tender.ID,
 		Name:        tender.Name,
@@ -111,7 +111,7 @@ func CreateTender(c *fiber.Ctx) error {
 		})
 	}
 
-	response := models.TenderResponse{
+	response := models2.TenderResponse{
 		ID:             tender.ID,
 		Name:           tender.Name,
 		Description:    tender.Description,
@@ -151,7 +151,7 @@ func GetUserTenders(c *fiber.Ctx) error {
 		})
 	}
 
-	var user models.Employee
+	var user models2.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(401).JSON(fiber.Map{
@@ -163,7 +163,7 @@ func GetUserTenders(c *fiber.Ctx) error {
 		})
 	}
 
-	var tenders []models.Tender
+	var tenders []models2.Tender
 	if err := db.Where("creator_username = ?", username).
 		Order("name ASC").
 		Limit(limit).
@@ -182,7 +182,7 @@ func GetUserTenders(c *fiber.Ctx) error {
 
 	//TODO Оптимизировать по запросам
 	for _, tender := range tenders {
-		var tenderVersions []models.TenderVersion
+		var tenderVersions []models2.TenderVersion
 		if err := db.Where("tender_id = ?", tender.ID).
 			Order("version DESC").
 			Find(&tenderVersions).Error; err != nil {
@@ -232,8 +232,8 @@ func GetTenders(c *fiber.Ctx) error {
 	}
 
 	// Запрос тендеров с фильтрами
-	var tenders []models.Tender
-	query := db.Model(&models.Tender{}).Limit(limit).Offset(offset)
+	var tenders []models2.Tender
+	query := db.Model(&models2.Tender{}).Limit(limit).Offset(offset)
 
 	if serviceType != "" {
 		query = query.Where("service_type = ?", serviceType)
@@ -256,7 +256,7 @@ func GetTenders(c *fiber.Ctx) error {
 	var response []fiber.Map
 
 	for _, tender := range tenders {
-		var versions []models.TenderVersion
+		var versions []models2.TenderVersion
 		if err := db.Where("tender_id = ?", tender.ID).
 			Order("name ASC").
 			Find(&versions).Error; err != nil {
@@ -302,7 +302,7 @@ func GetTenderStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	var user models.Employee
+	var user models2.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(401).JSON(fiber.Map{
@@ -314,7 +314,7 @@ func GetTenderStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	var tender models.Tender
+	var tender models2.Tender
 	if err := db.First(&tender, "id = ?", parsedTenderID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(404).JSON(fiber.Map{
@@ -327,7 +327,7 @@ func GetTenderStatus(c *fiber.Ctx) error {
 	}
 
 	if tender.Status == "CREATED" || tender.Status == "CLOSED" {
-		var orgResp models.OrganizationResponsible
+		var orgResp models2.OrganizationResponsible
 		if err := db.Where("user_id = ? AND organization_id = ?", user.ID, tender.OrganizationID).First(&orgResp).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return c.Status(403).JSON(fiber.Map{
@@ -369,17 +369,17 @@ func UpdateTenderStatus(c *fiber.Ctx) error {
 
 	newStatus = strings.ToUpper(newStatus)
 
-	var status models.TenderStatusType
-	switch models.TenderStatusType(newStatus) {
-	case models.TenderStatusCreated, models.TenderStatusPublished, models.TenderStatusClosed:
-		status = models.TenderStatusType(newStatus)
+	var status models2.TenderStatusType
+	switch models2.TenderStatusType(newStatus) {
+	case models2.TenderStatusCreated, models2.TenderStatusPublished, models2.TenderStatusClosed:
+		status = models2.TenderStatusType(newStatus)
 	default:
 		return c.Status(400).JSON(fiber.Map{
 			"reason": "Неверный формат запроса или его параметры.",
 		})
 	}
 
-	var user models.Employee
+	var user models2.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(401).JSON(fiber.Map{
@@ -391,7 +391,7 @@ func UpdateTenderStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	var tender models.Tender
+	var tender models2.Tender
 	if err := db.First(&tender, "id = ?", parsedTenderID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(404).JSON(fiber.Map{
@@ -407,7 +407,7 @@ func UpdateTenderStatus(c *fiber.Ctx) error {
 		return err
 	}
 
-	var latestVersion models.TenderVersion
+	var latestVersion models2.TenderVersion
 	if err := db.Where("tender_id = ?", tender.ID).
 		Order("version DESC").
 		First(&latestVersion).Error; err != nil {
@@ -430,7 +430,7 @@ func UpdateTenderStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	response := models.TenderResponse{
+	response := models2.TenderResponse{
 		ID:             tender.ID,
 		Name:           tender.Name,
 		Description:    tender.Description,
@@ -455,7 +455,7 @@ func UpdateTender(c *fiber.Ctx) error {
 		})
 	}
 
-	var user models.Employee
+	var user models2.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(401).JSON(fiber.Map{
@@ -467,7 +467,7 @@ func UpdateTender(c *fiber.Ctx) error {
 		})
 	}
 
-	var tender models.Tender
+	var tender models2.Tender
 	if err := db.First(&tender, "id = ?", tenderID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(404).JSON(fiber.Map{
@@ -511,14 +511,14 @@ func UpdateTender(c *fiber.Ctx) error {
 
 	var version int
 	if isUpdated {
-		var lastVersion models.TenderVersion
+		var lastVersion models2.TenderVersion
 		if err := db.Where("tender_id = ?", tender.ID).Order("version desc").First(&lastVersion).Error; err == nil {
 			version = lastVersion.Version + 1
 		} else {
 			version = 1
 		}
 
-		tenderVersion := models.TenderVersion{
+		tenderVersion := models2.TenderVersion{
 			ID:          uuid.New(),
 			TenderID:    tender.ID,
 			Version:     version,
@@ -572,7 +572,7 @@ func RollbackTender(c *fiber.Ctx) error {
 		})
 	}
 
-	var user models.Employee
+	var user models2.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(401).JSON(fiber.Map{
@@ -584,7 +584,7 @@ func RollbackTender(c *fiber.Ctx) error {
 		})
 	}
 
-	var tender models.Tender
+	var tender models2.Tender
 	if err := db.First(&tender, "id = ?", tenderUUID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(404).JSON(fiber.Map{
@@ -600,7 +600,7 @@ func RollbackTender(c *fiber.Ctx) error {
 		return err
 	}
 
-	var tenderVersion models.TenderVersion
+	var tenderVersion models2.TenderVersion
 	if err := db.Where("tender_id = ? AND version = ?", tenderUUID, version).First(&tenderVersion).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(404).JSON(fiber.Map{
@@ -624,13 +624,13 @@ func RollbackTender(c *fiber.Ctx) error {
 	}
 
 	var maxVersion int
-	if err := db.Model(&models.TenderVersion{}).Where("tender_id = ?", tender.ID).Select("COALESCE(MAX(version), 0)").Scan(&maxVersion).Error; err != nil {
+	if err := db.Model(&models2.TenderVersion{}).Where("tender_id = ?", tender.ID).Select("COALESCE(MAX(version), 0)").Scan(&maxVersion).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"reason": "Ошибка при определении максимальной версии тендера",
 		})
 	}
 
-	newVersion := models.TenderVersion{
+	newVersion := models2.TenderVersion{
 		TenderID:    tender.ID,
 		Version:     maxVersion + 1,
 		Name:        tender.Name,
@@ -646,7 +646,7 @@ func RollbackTender(c *fiber.Ctx) error {
 		})
 	}
 
-	response := models.TenderResponse{
+	response := models2.TenderResponse{
 		ID:             tender.ID,
 		Name:           tender.Name,
 		Description:    tender.Description,
@@ -692,7 +692,7 @@ func CreateBid(c *fiber.Ctx) error {
 		})
 	}
 
-	var tender models.Tender
+	var tender models2.Tender
 	if err := db.First(&tender, "id = ?", tenderID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(404).JSON(fiber.Map{
@@ -710,10 +710,10 @@ func CreateBid(c *fiber.Ctx) error {
 		})
 	}
 
-	bid := models.Bid{
+	bid := models2.Bid{
 		Name:            input.Name,
 		Description:     input.Description,
-		Status:          models.BidStatusCreated,
+		Status:          models2.BidStatusCreated,
 		TenderID:        tenderID,
 		OrganizationID:  organizationID,
 		Version:         1, // Начальная версия
@@ -726,7 +726,7 @@ func CreateBid(c *fiber.Ctx) error {
 		})
 	}
 
-	bidVersion := models.BidVersion{
+	bidVersion := models2.BidVersion{
 		ID:          uuid.New(),
 		BidID:       bid.ID,
 		Version:     bid.Version,
@@ -781,7 +781,7 @@ func GetUserBids(c *fiber.Ctx) error {
 		}
 	}
 
-	var bids []models.Bid
+	var bids []models2.Bid
 	if err := db.Where("creator_username = ?", username).
 		Limit(limit).Offset(offset).
 		Find(&bids).Error; err != nil {
@@ -791,9 +791,9 @@ func GetUserBids(c *fiber.Ctx) error {
 	}
 
 	// Get the latest version for each bid
-	var bidVersions []models.BidVersion
+	var bidVersions []models2.BidVersion
 	for _, bid := range bids {
-		var latestVersion models.BidVersion
+		var latestVersion models2.BidVersion
 		if err := db.Where("bid_id = ?", bid.ID).
 			Order("version DESC").
 			First(&latestVersion).Error; err != nil {
@@ -847,17 +847,17 @@ func UpdateBidStatus(c *fiber.Ctx) error {
 
 	newStatus = strings.ToUpper(newStatus)
 
-	var status models.BidStatusType
-	switch models.BidStatusType(newStatus) {
-	case models.BidStatusCreated, models.BidStatusPublished, models.BidStatusCanceled:
-		status = models.BidStatusType(newStatus)
+	var status models2.BidStatusType
+	switch models2.BidStatusType(newStatus) {
+	case models2.BidStatusCreated, models2.BidStatusPublished, models2.BidStatusCanceled:
+		status = models2.BidStatusType(newStatus)
 	default:
 		return c.Status(400).JSON(fiber.Map{
 			"reason": "Неверный формат запроса или его параметры.",
 		})
 	}
 
-	var user models.Employee
+	var user models2.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(401).JSON(fiber.Map{
@@ -869,7 +869,7 @@ func UpdateBidStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	var bid models.Bid
+	var bid models2.Bid
 	if err := db.First(&bid, "id = ?", parsedBidID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(404).JSON(fiber.Map{
@@ -885,7 +885,7 @@ func UpdateBidStatus(c *fiber.Ctx) error {
 		return err
 	}
 
-	var latestVersion models.BidVersion
+	var latestVersion models2.BidVersion
 	if err := db.Where("bid_id = ?", bid.ID).
 		Order("version DESC").
 		First(&latestVersion).Error; err != nil {
@@ -942,7 +942,7 @@ func GetBidStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	var user models.Employee
+	var user models2.Employee
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(401).JSON(fiber.Map{
@@ -954,7 +954,7 @@ func GetBidStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	var bid models.Bid
+	var bid models2.Bid
 	if err := db.First(&bid, "id = ?", parsedBidID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(404).JSON(fiber.Map{
@@ -966,7 +966,7 @@ func GetBidStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	var organization models.Organization
+	var organization models2.Organization
 	if err := db.First(&organization, "id = ?", bid.OrganizationID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(404).JSON(fiber.Map{
@@ -978,7 +978,7 @@ func GetBidStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	var orgResp models.OrganizationResponsible
+	var orgResp models2.OrganizationResponsible
 	if err := db.Where("user_id = ? AND organization_id = ?", user.ID, bid.OrganizationID).First(&orgResp).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(403).JSON(fiber.Map{

@@ -7,11 +7,11 @@ WORKDIR /app
 RUN apk update && apk add --no-cache git
 
 # Копируем go.mod и go.sum из папки проекта
-COPY go.mod go.sum ./
+COPY ../go.mod go.sum ./
 RUN go mod download
 
 # Копируем исходный код из папки проекта
-COPY . .
+COPY .. .
 
 # Собираем исполняемый файл
 RUN go build -o main cmd/app/main.go
